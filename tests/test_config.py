@@ -795,6 +795,13 @@ class TestPeftConfig:
         assert loaded_config.n_frequency_pattern["layers.0.fc"] == 10
         assert loaded_config.n_frequency_pattern["fc"] == 30
 
+        # Check that the actual n_frequency values applied to the model are correct
+        # layers.0.fc should have n_frequency=10 (specific), layers.1.fc should have n_frequency=30 (general)
+        n_frequency_0 = loaded_model.get_base_model().decoder.layers[0].fc.fourierft_n_frequency["default"]
+        n_frequency_1 = loaded_model.get_base_model().decoder.layers[1].fc.fourierft_n_frequency["default"]
+        assert n_frequency_0 == 10
+        assert n_frequency_1 == 30
+
     def test_waveft_save_load_roundtrip_with_n_frequency_pattern(self, tmp_path):
         # Regression test for https://github.com/huggingface/peft/issues/3985
         # Test that WaveFT config with n_frequency_pattern saves and loads correctly
@@ -829,6 +836,13 @@ class TestPeftConfig:
         assert loaded_config.n_frequency_pattern["layers.0.fc"] == 10
         assert loaded_config.n_frequency_pattern["fc"] == 30
 
+        # Check that the actual n_frequency values applied to the model are correct
+        # layers.0.fc should have n_frequency=10 (specific), layers.1.fc should have n_frequency=30 (general)
+        n_frequency_0 = loaded_model.get_base_model().decoder.layers[0].fc.waveft_n_frequency["default"]
+        n_frequency_1 = loaded_model.get_base_model().decoder.layers[1].fc.waveft_n_frequency["default"]
+        assert n_frequency_0 == 10
+        assert n_frequency_1 == 30
+
     def test_c3a_save_load_roundtrip_with_block_size_pattern(self, tmp_path):
         # Regression test for https://github.com/huggingface/peft/issues/3985
         # Test that C3A config with block_size_pattern saves and loads correctly
@@ -862,6 +876,13 @@ class TestPeftConfig:
         # Check that the specific key value is correct
         assert loaded_config.block_size_pattern["layers.0.fc"] == 2
         assert loaded_config.block_size_pattern["fc"] == 4
+
+        # Check that the actual block_size values applied to the model are correct
+        # layers.0.fc should have block_size=2 (specific), layers.1.fc should have block_size=4 (general)
+        block_size_0 = loaded_model.get_base_model().decoder.layers[0].fc.block_size["default"]
+        block_size_1 = loaded_model.get_base_model().decoder.layers[1].fc.block_size["default"]
+        assert block_size_0 == 2
+        assert block_size_1 == 4
 
     def test_delora_save_load_roundtrip_with_lambda_pattern(self, tmp_path):
         # Regression test for https://github.com/huggingface/peft/issues/3985
