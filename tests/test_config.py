@@ -720,18 +720,64 @@ class TestPeftConfig:
 
     def test_save_pretrained_preserves_n_frequency_pattern_order(self, tmp_path):
         # Test that n_frequency_pattern order is preserved for FourierFT and WaveFT
+        # and that the first pattern in overlapping patterns takes precedence.
+        from torch import nn
+
+        class Block(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.fc = nn.Linear(16, 16)
+
+        class Model(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.decoder = nn.Module()
+                self.decoder.layers = nn.ModuleList([Block() for _ in range(2)])
+
         for config_class in (FourierFTConfig, WaveFTConfig):
             config = config_class(
-                n_frequency_pattern={"model.layers.1.attn.k_proj": 100, "model.layers.0.attn.k_proj": 200},
-                target_modules=["k_proj"],
+                n_frequency_pattern={"layers.0.fc": 100, "fc": 200},
+                target_modules=["fc"],
             )
             config.save_pretrained(tmp_path)
             config_dict = json.loads((tmp_path / "adapter_config.json").read_text())
 
             assert list(config_dict["n_frequency_pattern"]) == [
-                "model.layers.1.attn.k_proj",
-                "model.layers.0.attn.k_proj",
+                "layers.0.fc",
+                "fc",
             ]
+
+            # Load the model back and check effective n_frequency values
+            # layers.0.fc matches both patterns, first match wins → 100
+            # layers.1.fc matches only the general pattern → 200
+            model = get_peft_model(Model(), config)
+            model.save_pretrained(tmp_path)
+
+            loaded_model = PeftModel.from_pretrained(Model(), tmp_path)
+            loaded_config = loaded_model.peft_config["default"]
+
+            assert list(loaded_config.n_frequency_pattern.keys()) == [
+                "layers.0.fc",
+                "fc",
+            ]
+            assert loaded_config.n_frequency_pattern["layers.0.fc"] == 100
+            assert loaded_config.n_frequency_pattern["fc"] == 200
+
+            n_frequency_attr = (
+                "fourierft_n_frequency"
+                if config_class == FourierFTConfig
+                else "waveft_n_frequency"
+            )
+            n_frequency_0 = getattr(
+                loaded_model.get_base_model().decoder.layers[0].fc,
+                n_frequency_attr,
+            )["default"]
+            n_frequency_1 = getattr(
+                loaded_model.get_base_model().decoder.layers[1].fc,
+                n_frequency_attr,
+            )["default"]
+            assert n_frequency_0 == 100
+            assert n_frequency_1 == 200
 
             # Clean up for next iteration
             import shutil
@@ -741,25 +787,99 @@ class TestPeftConfig:
 
     def test_save_pretrained_preserves_block_size_pattern_order(self, tmp_path):
         # Test that block_size_pattern order is preserved for C3A
+        # and that the first pattern in overlapping patterns takes precedence.
+        from torch import nn
+
+        class Block(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.fc = nn.Linear(16, 16)
+
+        class Model(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.decoder = nn.Module()
+                self.decoder.layers = nn.ModuleList([Block() for _ in range(2)])
+
         config = C3AConfig(
-            block_size_pattern={"model.layers.1.attn.k_proj": 128, "model.layers.0.attn.k_proj": 256},
-            target_modules=["k_proj"],
+            block_size_pattern={"layers.0.fc": 2, "fc": 4},
+            target_modules=["fc"],
         )
         config.save_pretrained(tmp_path)
         config_dict = json.loads((tmp_path / "adapter_config.json").read_text())
 
-        assert list(config_dict["block_size_pattern"]) == ["model.layers.1.attn.k_proj", "model.layers.0.attn.k_proj"]
+        assert list(config_dict["block_size_pattern"]) == ["layers.0.fc", "fc"]
+
+        # Load the model back and check effective block_size values
+        # layers.0.fc matches both patterns, first match wins → 2
+        # layers.1.fc matches only the general pattern → 4
+        model = get_peft_model(Model(), config)
+        model.save_pretrained(tmp_path)
+
+        loaded_model = PeftModel.from_pretrained(Model(), tmp_path)
+        loaded_config = loaded_model.peft_config["default"]
+
+        assert list(loaded_config.block_size_pattern.keys()) == ["layers.0.fc", "fc"]
+        assert loaded_config.block_size_pattern["layers.0.fc"] == 2
+        assert loaded_config.block_size_pattern["fc"] == 4
+
+        block_size_0 = (
+            loaded_model.get_base_model().decoder.layers[0].fc.block_size["default"]
+        )
+        block_size_1 = (
+            loaded_model.get_base_model().decoder.layers[1].fc.block_size["default"]
+        )
+        assert block_size_0 == 2
+        assert block_size_1 == 4
 
     def test_save_pretrained_preserves_lambda_pattern_order(self, tmp_path):
         # Test that lambda_pattern order is preserved for DeLoRA
+        # and that the first pattern in overlapping patterns takes precedence.
+        from torch import nn
+
+        class Block(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.fc = nn.Linear(16, 16)
+
+        class Model(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.decoder = nn.Module()
+                self.decoder.layers = nn.ModuleList([Block() for _ in range(2)])
+
         config = DeloraConfig(
-            lambda_pattern={"model.layers.1.attn.k_proj": 16, "model.layers.0.attn.k_proj": 32},
-            target_modules=["k_proj"],
+            lambda_pattern={"layers.0.fc": 5, "fc": 50},
+            target_modules=["fc"],
+            r=8,
+            delora_lambda=15,
         )
         config.save_pretrained(tmp_path)
         config_dict = json.loads((tmp_path / "adapter_config.json").read_text())
 
-        assert list(config_dict["lambda_pattern"]) == ["model.layers.1.attn.k_proj", "model.layers.0.attn.k_proj"]
+        assert list(config_dict["lambda_pattern"]) == ["layers.0.fc", "fc"]
+
+        # Load the model back and check effective lambda values
+        # layers.0.fc matches both patterns, first match wins → 5
+        # layers.1.fc matches only the general pattern → 50
+        model = get_peft_model(Model(), config)
+        model.save_pretrained(tmp_path)
+
+        loaded_model = PeftModel.from_pretrained(Model(), tmp_path)
+        loaded_config = loaded_model.peft_config["default"]
+
+        assert list(loaded_config.lambda_pattern.keys()) == ["layers.0.fc", "fc"]
+        assert loaded_config.lambda_pattern["layers.0.fc"] == 5
+        assert loaded_config.lambda_pattern["fc"] == 50
+
+        lambda_0 = (
+            loaded_model.get_base_model().decoder.layers[0].fc.delora_lambda["default"].item()
+        )
+        lambda_1 = (
+            loaded_model.get_base_model().decoder.layers[1].fc.delora_lambda["default"].item()
+        )
+        assert lambda_0 == 5
+        assert lambda_1 == 50
 
     def test_fourierft_save_load_roundtrip_with_n_frequency_pattern(self, tmp_path):
         # Regression test for https://github.com/huggingface/peft/issues/3985
